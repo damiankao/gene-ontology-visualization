@@ -1,0 +1,258 @@
+<html>
+  
+  <head>
+    <script type="text/javascript" src="d3.v2.js"></script>
+    <script type="text/javascript" src="GOall.js"></script>
+    <style>
+      circle.node {
+        stroke: #fff;
+        stroke-width: 1.5px;
+      }
+
+      line.link {
+        stroke: #999;
+        stroke-opacity: .6;
+      }
+
+      text.node {
+        font-family:Arial;
+        font-size:8pt;
+        font-weight:bold;
+        text-anchor:middle;
+        stroke:white;
+        stroke-width:0.3px;
+      }
+
+      a {
+        font-family:Arial;
+        font-size:10pt;
+      }
+</style>
+  </head>
+  
+  <body>
+    <br>
+    <a onclick='fixAllNodes();'>fix nodes</a> / <a onclick='unfixAllNodes();'>unfix nodes</a>
+    <br>
+    <a onclick='update("GO:0035070");'>salivary gland histolysis</a> - <a onclick='update("GO:0021873");'>forebrain neoblast division</a>
+    <br><br>
+    <div id="chart"></div>
+    <script type="text/javascript">
+    //accessor and utility functions
+    Array.prototype.unique = function() {
+        var o = {}, i, l = this.length, r = [];
+        for(i=0; i<l;i+=1) o[this[i]] = this[i];
+        for(i in o) r.push(o[i]);
+        return r;
+    };
+
+    function GO(goid) {
+      return goNodes[goIndex[goid]];
+    }
+
+    function recursiveAncestor(goid) {
+      goids = [];
+      goids.push(goid);
+
+      var data = GO(goid);
+
+      if (data['p'].length > 0) {
+        for (var i = 0, count = data['p'].length ; i < count ; i ++ ) {
+          pgoid = goNodes[data['p'][i][0]]['i'];
+          goids = goids.concat(recursiveAncestor(pgoid));
+        }
+      }
+
+      return goids
+    }
+
+    function immediateChildren(goid) {
+      current = GO(goid);
+      childrenIndeces = current['c'];
+
+      goids = [];
+      for (var i = 0, count = childrenIndeces.length ; i < count; i ++ ) {
+        childIndex = childrenIndeces[i][0];
+        goids.push(goNodes[childIndex]['i']);
+      }
+
+      return goids;
+    }
+
+    //creates a D3 structure that can be inputted into the force-directed graph layout
+    function createD3Structure(goids, target) {
+      goids = goids.unique();
+
+      nodes = [];
+      links = [];
+
+      nodeIndex = {};
+
+      for (var i = 0, count = goids.length ; i < count ; i ++ ) {
+        goid = goids[i];
+        node = {};
+        node['name'] = GO(goid)['n'];
+        node['id'] = goid;
+        node['r'] = 10;
+        node['is'] = 'node';
+        nodeIndex[goid] = i;
+        nodes.push(node);
+      }
+
+      for (var i = 0, count = goids.length ; i < count ; i ++ ) {
+        goid = goids[i];
+        parents = GO(goid)['p'];
+
+        if (parents.length > 0 ) {
+          for (var a = 0, countA = parents.length ; a < countA ; a ++ ) {
+            parent = parents[a];
+            pgoid = goNodes[parent[0]]['i'];
+            prel = parent[1];
+
+            pIndex = nodeIndex[pgoid];
+
+            if (pgoid == target) {
+              nodes[i]['is'] = 'child';
+              nodes[i]['r'] = 30;
+            }
+
+            if (pIndex != undefined) {
+              link = {};
+              link['source'] = pIndex;
+              link['target'] = i;
+              link['value'] = 5;
+              link['type'] = prel;
+              links.push(link)
+            }
+          }
+        } else {        
+          nodes[i].fixed = true;
+          nodes[i].x = width / 2;
+          nodes[i].y = height - 50;
+          nodes[i]['is'] = 'root';
+        }
+      }
+
+      nodes[nodeIndex[target]].fixed = true;
+      nodes[nodeIndex[target]].x = width / 2;
+      nodes[nodeIndex[target]].y = 100;
+      nodes[nodeIndex[target]]['is'] = 'target';
+    
+      return {'nodes' : nodes, 'links' : links};
+    }      
+    
+    //drawing the graph
+    function drawGraph(struct) {
+      force
+        .nodes(struct.nodes)
+        .links(struct.links);
+
+      var strokeColor = d3.scale.category10();
+      var radiusScale = d3.scale.linear().domain([0,d3.max(struct.nodes,function(d) {return d.r;})]).range([5,10]);
+
+      var link = svg.selectAll("line.link")
+        .data(struct.links)
+        .enter().append("line")
+        .attr("class", "link")
+        .style('stroke', function(d, i ) { return strokeColor(d.type);})
+        .style("stroke-width", 2);
+     
+      var node = svg.selectAll("circle.node")
+        .data(struct.nodes)
+        .enter().append("circle")
+        .attr("class", "node")
+        .attr("r", function(d) { return radiusScale(d.r);})
+        .style("fill", function(d,i) {
+          if (d.is == "root") {
+            return 'black';
+          } else if (d.is == "target" || d.is == 'child') {
+            return 'orange';
+          } else {
+            return 'lightblue';
+          }
+        })
+        .call(force.drag)
+        .on('click',function(d,i) {
+          update(d['id']);
+        });
+     
+      var nodeText = svg.selectAll("text.node")
+        .data(struct.nodes)
+        .enter().append("text")
+        .attr("class", "node")
+        .attr("displayState",'y')
+        //.style('display','none')
+        .text(function(d) { return d.name;});
+     
+      force.on("tick", function(e) {
+        link.attr("x1", function(d) { return d.source.x; })
+          .attr("y1", function(d) { return d.source.y; })
+          .attr("x2", function(d) { return d.target.x; })
+          .attr("y2", function(d) { return d.target.y; });
+     
+        node.attr("cx", function(d) { return d.x; })
+          .attr("cy", function(d) { return d.y; })
+
+        nodeText.attr("x", function(d) { return d.x; })
+          .attr("y", function(d) { return d.y + radiusScale(d.r) + 10; })
+      });
+
+      force.start();
+    }
+
+    //recreate data structures and redraw graph with new nodes
+    function update(goid) {
+      struct = recursiveAncestor(goid);
+      immChildren = immediateChildren(goid);
+      struct = struct.concat(immChildren);
+
+      data = createD3Structure(struct,goid);
+
+      svg.selectAll("line.link").remove();
+      svg.selectAll("circle.node").remove();
+      svg.selectAll("text.node").remove();
+
+      drawGraph(data);
+    }
+
+    //fixing and unfixing the nodes
+    function fixAllNodes() {
+      for (var i = 0, count = force.nodes().length ; i < count ; i ++ ) {
+        force.nodes()[i].fixed = true;
+      }
+    }
+
+    function unfixAllNodes() {
+      for (var i = 0, count = force.nodes().length ; i < count ; i ++ ) {
+        if (force.nodes()[i]['is'] == "node") force.nodes()[i].fixed = false;
+      }
+    }
+
+    //initializing statements
+    var width = 700;
+    var height = 600;
+
+    var force = d3.layout.force()
+      .charge(-3000)
+      .linkDistance(50)
+      .theta(0.2)
+      .gravity(1)
+      .size([width, height]);
+       
+    var svg = d3.select("#chart").append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+    svg.append('rect')
+      .style('fill','white')
+      .style('stroke','gray')
+      .attr('width',width)
+      .attr('height',height)
+      .attr('x',0)
+      .attr('y',0);
+
+    update('GO:0008150');
+    </script>
+  </body>
+
+</html>
